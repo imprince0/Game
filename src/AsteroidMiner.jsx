@@ -660,7 +660,7 @@ const AsteroidMiner = () => {
     }
 
     // Boost
-    if (game.keys[' '] && boost > 0 && moveVector.length() > 0) {
+    if (game.keys[' '] && boost > 0 && game.shipVelocity.length() > 0.01) {
       game.isBoosting = true;
       game.shipVelocity.multiplyScalar(1.5);
       setBoost(b => Math.max(0, b - 30 * deltaTime));
@@ -1087,11 +1087,14 @@ const AsteroidMiner = () => {
       boostDuration: 1
     });
 
-    // Reset ship position
+    // Reset ship position and rotation
     game.ship.position.set(0, 0, 0);
+    game.ship.rotation.set(0, 0, 0);
     game.shipVelocity.set(0, 0, 0);
     game.mouseX = 0;
     game.mouseY = 0;
+    game.keyboardRotationX = 0;
+    game.keyboardRotationY = 0;
 
     setGameState('playing');
     spawnWave(1);
