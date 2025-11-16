@@ -6,12 +6,13 @@ import * as THREE from 'three';
  *
  * Controls:
  * - WASD: Move ship
- * - Mouse: Look around
- * - Left Click: Fire laser
- * - Spacebar: Boost
+ * - Arrow Keys or Mouse: Look around
+ * - Left Click or F: Fire laser
+ * - Spacebar: Boost (in-game) or Start (menu)
  * - U: Toggle upgrades
  * - ESC: Pause
  * - R: Restart (when game over)
+ * - Mobile: Touch controls available
  */
 
 const AsteroidMiner = () => {
@@ -29,6 +30,7 @@ const AsteroidMiner = () => {
   const [enemiesRemaining, setEnemiesRemaining] = useState(0);
   const [showControls, setShowControls] = useState(true);
   const [showUpgrades, setShowUpgrades] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   // Resources
   const [resources, setResources] = useState({
@@ -60,6 +62,8 @@ const AsteroidMiner = () => {
     shipRotation: new THREE.Euler(),
     mouseX: 0,
     mouseY: 0,
+    keyboardRotationX: 0,
+    keyboardRotationY: 0,
     keys: {},
     lastTime: 0,
     isBoosting: false,
@@ -67,7 +71,11 @@ const AsteroidMiner = () => {
     screenShake: 0,
     cameraOffset: new THREE.Vector3(0, 2, 5),
     animationId: null,
-    damageCooldown: 0
+    damageCooldown: 0,
+    touchStartX: 0,
+    touchStartY: 0,
+    touchJoystick: { x: 0, y: 0 },
+    usingKeyboardRotation: false
   });
 
   // Upgrade costs
@@ -90,6 +98,16 @@ const AsteroidMiner = () => {
 
     const game = gameRef.current;
 
+    // Detect mobile
+    const checkMobile = () => {
+      const mobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) {
+        game.usingKeyboardRotation = true; // Mobile uses touch rotation
+      }
+    };
+    checkMobile();
+
     // Initialize Three.js scene
     initScene();
 
@@ -100,6 +118,9 @@ const AsteroidMiner = () => {
     window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('resize', handleResize);
     window.addEventListener('click', handlePointerLock);
+    window.addEventListener('touchstart', handleTouchStart, { passive: false });
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd, { passive: false });
 
     // Hide controls after 10 seconds
     const timer = setTimeout(() => setShowControls(false), 10000);
@@ -115,6 +136,9 @@ const AsteroidMiner = () => {
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('click', handlePointerLock);
+      window.removeEventListener('touchstart', handleTouchStart);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
       clearTimeout(timer);
 
       if (game.animationId) {
@@ -653,9 +677,38 @@ const AsteroidMiner = () => {
     // Update position
     game.ship.position.add(game.shipVelocity);
 
-    // Rotate ship based on mouse
-    const targetRotationY = -game.mouseX * 0.002;
-    const targetRotationX = -game.mouseY * 0.002;
+    // Handle keyboard rotation (arrow keys)
+    const rotationSpeed = 3 * deltaTime;
+    if (game.keys['ArrowLeft']) {
+      game.keyboardRotationY += rotationSpeed;
+      game.usingKeyboardRotation = true;
+    }
+    if (game.keys['ArrowRight']) {
+      game.keyboardRotationY -= rotationSpeed;
+      game.usingKeyboardRotation = true;
+    }
+    if (game.keys['ArrowUp']) {
+      game.keyboardRotationX += rotationSpeed;
+      game.usingKeyboardRotation = true;
+    }
+    if (game.keys['ArrowDown']) {
+      game.keyboardRotationX -= rotationSpeed;
+      game.usingKeyboardRotation = true;
+    }
+
+    // Clamp keyboard rotation
+    game.keyboardRotationX = Math.max(-1.5, Math.min(1.5, game.keyboardRotationX));
+    game.keyboardRotationY = game.keyboardRotationY % (Math.PI * 2);
+
+    // Rotate ship based on keyboard or mouse
+    let targetRotationY, targetRotationX;
+    if (game.usingKeyboardRotation) {
+      targetRotationY = game.keyboardRotationY;
+      targetRotationX = game.keyboardRotationX;
+    } else {
+      targetRotationY = -game.mouseX * 0.002;
+      targetRotationX = -game.mouseY * 0.002;
+    }
 
     game.ship.rotation.y += (targetRotationY - game.ship.rotation.y) * 0.1;
     game.ship.rotation.x += (targetRotationX - game.ship.rotation.x) * 0.1;
@@ -840,6 +893,19 @@ const AsteroidMiner = () => {
     const game = gameRef.current;
     game.keys[e.key] = true;
 
+    // Start game with space on menu screen
+    if (e.key === ' ' && gameState === 'menu') {
+      e.preventDefault();
+      startGame();
+      return;
+    }
+
+    // Fire laser with F key
+    if ((e.key === 'f' || e.key === 'F') && gameState === 'playing') {
+      e.preventDefault();
+      fireLaser();
+    }
+
     if (e.key === 'Escape') {
       if (gameState === 'playing') {
         setGameState('paused');
@@ -879,6 +945,11 @@ const AsteroidMiner = () => {
       // Clamp
       game.mouseX = Math.max(-500, Math.min(500, game.mouseX));
       game.mouseY = Math.max(-500, Math.min(500, game.mouseY));
+
+      // If using mouse, switch from keyboard rotation
+      if (e.movementX !== 0 || e.movementY !== 0) {
+        game.usingKeyboardRotation = false;
+      }
     }
   };
 
@@ -886,6 +957,82 @@ const AsteroidMiner = () => {
     if (e.button === 0 && gameState === 'playing') {
       fireLaser();
     }
+  };
+
+  // Touch event handlers for mobile
+  const handleTouchStart = (e) => {
+    const game = gameRef.current;
+
+    if (gameState === 'menu') {
+      startGame();
+      return;
+    }
+
+    if (gameState !== 'playing') return;
+
+    const touch = e.touches[0];
+    game.touchStartX = touch.clientX;
+    game.touchStartY = touch.clientY;
+
+    const centerZoneStart = window.innerWidth * 0.4;
+    const centerZoneEnd = window.innerWidth * 0.6;
+
+    // Center tap for boost
+    if (touch.clientX >= centerZoneStart && touch.clientX <= centerZoneEnd) {
+      game.keys[' '] = true;
+    }
+    // Right side tap for laser
+    else if (touch.clientX > centerZoneEnd) {
+      fireLaser();
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    e.preventDefault();
+    const game = gameRef.current;
+
+    if (gameState !== 'playing') return;
+    if (!e.touches.length) return;
+
+    const touch = e.touches[0];
+    const deltaX = touch.clientX - game.touchStartX;
+    const deltaY = touch.clientY - game.touchStartY;
+
+    // Left side of screen - movement joystick
+    if (game.touchStartX < window.innerWidth / 2) {
+      const maxDistance = 100;
+      const distance = Math.min(Math.sqrt(deltaX * deltaX + deltaY * deltaY), maxDistance);
+      const angle = Math.atan2(deltaY, deltaX);
+
+      game.touchJoystick.x = Math.cos(angle) * (distance / maxDistance);
+      game.touchJoystick.y = Math.sin(angle) * (distance / maxDistance);
+
+      // Simulate WASD keys based on joystick
+      game.keys['w'] = game.touchJoystick.y < -0.3;
+      game.keys['s'] = game.touchJoystick.y > 0.3;
+      game.keys['a'] = game.touchJoystick.x < -0.3;
+      game.keys['d'] = game.touchJoystick.x > 0.3;
+    } else {
+      // Right side of screen - camera rotation
+      game.keyboardRotationY -= deltaX * 0.01;
+      game.keyboardRotationX -= deltaY * 0.01;
+      game.keyboardRotationX = Math.max(-1.5, Math.min(1.5, game.keyboardRotationX));
+
+      game.touchStartX = touch.clientX;
+      game.touchStartY = touch.clientY;
+    }
+  };
+
+  const handleTouchEnd = (e) => {
+    const game = gameRef.current;
+
+    // Reset joystick and controls
+    game.touchJoystick = { x: 0, y: 0 };
+    game.keys['w'] = false;
+    game.keys['s'] = false;
+    game.keys['a'] = false;
+    game.keys['d'] = false;
+    game.keys[' '] = false;
   };
 
   const handleResize = () => {
@@ -1067,11 +1214,11 @@ const AsteroidMiner = () => {
       {gameState === 'playing' && (
         <>
           {/* Top Left - Status Bars */}
-          <div className="absolute top-4 left-4 space-y-2">
+          <div className="absolute top-2 md:top-4 left-2 md:left-4 space-y-1 md:space-y-2">
             {/* Health */}
             <div>
-              <div className="text-red-400 text-sm font-bold mb-1">HEALTH</div>
-              <div className="w-64 h-6 bg-gray-800 bg-opacity-80 rounded-full overflow-hidden border-2 border-red-900">
+              <div className="text-red-400 text-xs md:text-sm font-bold mb-1">HEALTH</div>
+              <div className="w-32 md:w-64 h-4 md:h-6 bg-gray-800 bg-opacity-80 rounded-full overflow-hidden border-2 border-red-900">
                 <div
                   className="h-full bg-gradient-to-r from-red-600 to-red-400 transition-all duration-300"
                   style={{ width: `${(health / maxHealth) * 100}%` }}
@@ -1081,8 +1228,8 @@ const AsteroidMiner = () => {
 
             {/* Boost */}
             <div>
-              <div className="text-yellow-400 text-sm font-bold mb-1">BOOST</div>
-              <div className="w-64 h-4 bg-gray-800 bg-opacity-80 rounded-full overflow-hidden border-2 border-yellow-900">
+              <div className="text-yellow-400 text-xs md:text-sm font-bold mb-1">BOOST</div>
+              <div className="w-32 md:w-64 h-3 md:h-4 bg-gray-800 bg-opacity-80 rounded-full overflow-hidden border-2 border-yellow-900">
                 <div
                   className="h-full bg-gradient-to-r from-yellow-600 to-yellow-400 transition-all duration-300"
                   style={{ width: `${boost}%` }}
@@ -1092,18 +1239,18 @@ const AsteroidMiner = () => {
           </div>
 
           {/* Top Right - Resources */}
-          <div className="absolute top-4 right-4 bg-gray-900 bg-opacity-80 p-4 rounded-lg border-2 border-gray-700">
-            <div className="text-white font-bold mb-2">RESOURCES</div>
-            <div className="space-y-1">
-              <div className="flex items-center justify-between space-x-4">
+          <div className="absolute top-2 md:top-4 right-2 md:right-4 bg-gray-900 bg-opacity-80 p-2 md:p-4 rounded-lg border-2 border-gray-700">
+            <div className="text-white text-xs md:text-base font-bold mb-1 md:mb-2">RESOURCES</div>
+            <div className="space-y-1 text-xs md:text-sm">
+              <div className="flex items-center justify-between space-x-2 md:space-x-4">
                 <span className="text-yellow-400">◆ Gold:</span>
                 <span className="text-white font-bold">{resources.gold}</span>
               </div>
-              <div className="flex items-center justify-between space-x-4">
+              <div className="flex items-center justify-between space-x-2 md:space-x-4">
                 <span className="text-cyan-400">◆ Blue:</span>
                 <span className="text-white font-bold">{resources.blue}</span>
               </div>
-              <div className="flex items-center justify-between space-x-4">
+              <div className="flex items-center justify-between space-x-2 md:space-x-4">
                 <span className="text-purple-400">◆ Purple:</span>
                 <span className="text-white font-bold">{resources.purple}</span>
               </div>
@@ -1111,11 +1258,11 @@ const AsteroidMiner = () => {
           </div>
 
           {/* Top Center - Wave Info */}
-          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-gray-900 bg-opacity-80 px-6 py-3 rounded-lg border-2 border-blue-700">
+          <div className="absolute top-2 md:top-4 left-1/2 transform -translate-x-1/2 bg-gray-900 bg-opacity-80 px-3 md:px-6 py-2 md:py-3 rounded-lg border-2 border-blue-700">
             <div className="text-center">
-              <div className="text-blue-400 text-sm font-bold">WAVE {wave}</div>
-              <div className="text-white text-lg font-bold">{enemiesRemaining} ENEMIES</div>
-              <div className="text-yellow-400 text-sm">SCORE: {score}</div>
+              <div className="text-blue-400 text-xs md:text-sm font-bold">WAVE {wave}</div>
+              <div className="text-white text-sm md:text-lg font-bold">{enemiesRemaining} ENEMIES</div>
+              <div className="text-yellow-400 text-xs md:text-sm">SCORE: {score}</div>
             </div>
           </div>
 
@@ -1133,12 +1280,21 @@ const AsteroidMiner = () => {
           {showControls && (
             <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-gray-900 bg-opacity-90 px-6 py-4 rounded-lg border-2 border-gray-700">
               <div className="text-white text-sm space-y-1">
-                <div><span className="text-cyan-400 font-bold">WASD:</span> Move Ship</div>
-                <div><span className="text-cyan-400 font-bold">MOUSE:</span> Look Around</div>
-                <div><span className="text-cyan-400 font-bold">LEFT CLICK:</span> Fire Laser</div>
-                <div><span className="text-cyan-400 font-bold">SPACE:</span> Boost</div>
-                <div><span className="text-cyan-400 font-bold">U:</span> Upgrades</div>
-                <div><span className="text-cyan-400 font-bold">ESC:</span> Pause</div>
+                {isMobile ? (
+                  <>
+                    <div><span className="text-cyan-400 font-bold">LEFT SIDE:</span> Drag to Move</div>
+                    <div><span className="text-cyan-400 font-bold">RIGHT SIDE:</span> Drag to Look</div>
+                    <div><span className="text-cyan-400 font-bold">TAP RIGHT:</span> Fire Laser</div>
+                  </>
+                ) : (
+                  <>
+                    <div><span className="text-cyan-400 font-bold">WASD:</span> Move Ship</div>
+                    <div><span className="text-cyan-400 font-bold">ARROWS:</span> Look Around (or Mouse)</div>
+                    <div><span className="text-cyan-400 font-bold">F or CLICK:</span> Fire Laser</div>
+                    <div><span className="text-cyan-400 font-bold">SPACE:</span> Boost</div>
+                    <div><span className="text-cyan-400 font-bold">U:</span> Upgrades | <span className="text-cyan-400 font-bold">ESC:</span> Pause</div>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -1148,20 +1304,29 @@ const AsteroidMiner = () => {
       {/* Menu Screen */}
       {gameState === 'menu' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70">
-          <div className="text-center">
-            <h1 className="text-6xl font-bold text-cyan-400 mb-4 tracking-wider">
+          <div className="text-center px-4">
+            <h1 className="text-4xl md:text-6xl font-bold text-cyan-400 mb-4 tracking-wider">
               ASTEROID MINER
             </h1>
-            <p className="text-white text-xl mb-8">Survive the waves. Collect resources. Upgrade your ship.</p>
+            <p className="text-white text-lg md:text-xl mb-8">Survive the waves. Collect resources. Upgrade your ship.</p>
             <button
               onClick={startGame}
-              className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-4 px-8 rounded-lg text-2xl transition-colors"
+              className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-4 px-8 rounded-lg text-xl md:text-2xl transition-colors"
             >
-              PRESS SPACE TO START
+              {isMobile ? 'TAP TO START' : 'PRESS SPACE TO START'}
             </button>
             <div className="mt-8 text-gray-400 text-sm space-y-1">
-              <div>WASD: Move | Mouse: Look | Left Click: Fire</div>
-              <div>Space: Boost | U: Upgrades | ESC: Pause</div>
+              {isMobile ? (
+                <>
+                  <div>Drag left side: Move | Drag right side: Look</div>
+                  <div>Tap right side: Fire | Tap center: Boost</div>
+                </>
+              ) : (
+                <>
+                  <div>WASD: Move | Arrows/Mouse: Look | F/Click: Fire</div>
+                  <div>Space: Boost | U: Upgrades | ESC: Pause</div>
+                </>
+              )}
             </div>
           </div>
         </div>
